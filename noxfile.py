@@ -2,6 +2,7 @@ from contextlib import ExitStack
 from functools import wraps
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from textwrap import dedent
 from zipfile import ZipFile
 import os
 import shlex
@@ -49,6 +50,29 @@ def session(default=True, python=LATEST, **kwargs):  # noqa: D103
     return _session
 
 
+def _install_coverage_hook(session: nox.Session):
+    """
+    Enable measurement of coverage in sub-processes.
+
+    See https://coverage.readthedocs.io/en/latest/subprocess.html.
+    """
+    session.run(
+        "python",
+        "-c",
+        dedent(
+            r"""
+            from pathlib import Path
+            import sysconfig
+
+            (Path(sysconfig.get_path("purelib")) / "coverage.pth").write_text(
+                "import coverage\ncoverage.process_startup()\n",
+                encoding="utf-8",
+            )
+            """,
+        ).lstrip("\n"),
+    )
+
+
 @session(python=SUPPORTED)
 def tests(session):
     """
@@ -63,7 +87,15 @@ def tests(session):
             github = None
 
         session.install("coverage[toml]")
-        session.run("coverage", "run", "-m", "pytest", TESTS)
+        _install_coverage_hook(session)
+        session.run(
+            "coverage",
+            "run",
+            "-m",
+            "pytest",
+            TESTS,
+            env=dict(COVERAGE_PROCESS_START=os.fsencode(PYPROJECT.resolve())),
+        )
         if github is None:
             session.run("coverage", "report")
         else:
